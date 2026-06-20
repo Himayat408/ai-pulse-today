@@ -173,6 +173,7 @@
         <button class="btn-amber" id="genBtn">Generate Draft</button>
         <button class="btn-amber" id="genImgBtn">Generate Image</button>
         <button class="btn-dark" id="postBtn">Post to Instagram</button>
+        <button class="btn-dark" id="resetBtn" style="border-color:#FF6258; color:#FF6258;">Reset</button>
       </div>
       <div class="img-hint" id="postGuardNote" style="display:none;"></div>
       <div id="statusMsg"></div>
@@ -336,6 +337,24 @@ $('clearLogBtn').addEventListener('click', async () => {
   log = [];
   renderLog();
   await storeSet('desk:log', log);
+});
+
+$('resetBtn').addEventListener('click', async () => {
+  $('headline').value = '';
+  $('caption').value = '';
+  $('charcount').textContent = '0';
+  $('imageUrl').value = '';
+  $('imgPreview').src = '';
+  $('imgPreview').style.display = 'none';
+  $('imgHint').textContent = "The graphic burns in whatever headline is currently in the box above, so edit the headline first, then generate the image.";
+  $('similarWarning').style.display = 'none';
+  $('statusMsg').className = ''; $('statusMsg').textContent = '';
+  $('fallback').style.display = 'none';
+  $('ticker').textContent = "WIRE QUIET — GENERATE TODAY'S DRAFT TO PULL HEADLINES — WIRE QUIET — GENERATE TODAY'S DRAFT TO PULL HEADLINES — ";
+  lastGeneratedHeadline = null;
+  updatePostButtonState();
+  await storeSet('desk:draft', { caption:'', headline:'', category:'', imageUrl:'', date: dateStr });
+  addLog('Dispatch reset — headline, caption, and image cleared.', '');
 });
 
 $('headline').addEventListener('input', () => {
