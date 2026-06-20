@@ -1,0 +1,700 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>AI Wire Desk</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600;700&family=Source+Serif+4:opsz,wght@8..60,400;8..60,600&display=swap" rel="stylesheet">
+<style>
+  :root{
+    --void:#060A07;
+    --panel:#0C1410;
+    --panel-edge:#1E3A2C;
+    --paper:#081410;
+    --paper-edge:#1E4430;
+    --ink:#C9FFD9;
+    --amber:#39FF74;
+    --amber-dim:#1F7A3D;
+    --green:#39FF74;
+    --red:#FF6258;
+    --text:#BFFFD1;
+    --muted:#5C9C74;
+  }
+  *{box-sizing:border-box;}
+  body{
+    margin:0;
+    background:var(--void);
+    color:var(--text);
+    font-family:'JetBrains Mono', monospace;
+    min-height:100vh;
+  }
+  .topbar{
+    display:flex; align-items:baseline; justify-content:space-between;
+    padding:18px 22px 14px;
+    border-bottom:1px solid var(--panel-edge);
+  }
+  .wordmark{
+    font-weight:700; font-size:15px; letter-spacing:0.14em;
+    color:var(--amber);
+  }
+  .wordmark span{color:var(--muted); font-weight:500; margin-left:10px; letter-spacing:0.05em;}
+  .status-pill{
+    display:flex; align-items:center; gap:7px; font-size:11px; color:var(--muted); letter-spacing:0.05em;
+  }
+  .dot{width:7px;height:7px;border-radius:50%; background:var(--red); box-shadow:0 0 6px var(--red);}
+  .dot.on{background:var(--green); box-shadow:0 0 6px var(--green);}
+
+  .ticker-wrap{
+    background:#000; border-bottom:1px solid var(--panel-edge);
+    overflow:hidden; white-space:nowrap; padding:9px 0;
+  }
+  .ticker{
+    display:inline-block; padding-left:100%;
+    color:var(--amber); font-size:12.5px; letter-spacing:0.04em;
+    animation: scroll-left 28s linear infinite;
+  }
+  @keyframes scroll-left{ from{transform:translateX(0);} to{transform:translateX(-100%);} }
+
+  .grid{
+    display:grid; grid-template-columns: 1.7fr 1fr; gap:22px;
+    max-width:1180px; margin:26px auto; padding:0 22px 60px;
+  }
+  @media (max-width: 860px){ .grid{grid-template-columns:1fr;} }
+
+  /* ---- Draft card (paper) ---- */
+  .draft-card{
+    background:var(--paper); color:var(--ink); border-radius:3px;
+    box-shadow:0 18px 40px -20px rgba(0,0,0,0.6);
+    position:relative; overflow:hidden;
+  }
+  .perforation{
+    height:14px; width:100%;
+    background-image: radial-gradient(circle at center, var(--void) 4px, transparent 4.2px);
+    background-size:18px 14px; background-position:9px center;
+    background-color:var(--paper-edge);
+  }
+  .card-inner{padding:22px 26px 26px;}
+  .eyebrow{
+    font-family:'JetBrains Mono', monospace; font-size:11px; letter-spacing:0.12em;
+    color:var(--amber-dim); text-transform:uppercase; margin-bottom:14px; display:flex; justify-content:space-between;
+  }
+  textarea#caption{
+    width:100%; min-height:230px; resize:vertical;
+    font-family:'Source Serif 4', serif; font-size:17px; line-height:1.55;
+    border:1px solid var(--paper-edge); background:#04100A; color:var(--ink);
+    padding:16px; border-radius:2px; outline:none;
+  }
+  textarea#caption:focus{border-color:var(--amber);}
+  .charcount{font-size:11px; color:var(--muted); text-align:right; margin-top:6px; font-family:'JetBrains Mono',monospace;}
+  .field-label{font-size:11px; letter-spacing:0.08em; color:var(--amber-dim); text-transform:uppercase; margin:18px 0 6px; font-family:'JetBrains Mono',monospace;}
+  input#imageUrl, input#headline{
+    width:100%; padding:10px 12px; font-family:'JetBrains Mono',monospace; font-size:12.5px;
+    border:1px solid var(--paper-edge); background:#04100A; color:var(--ink); border-radius:2px; outline:none;
+  }
+  input#headline{ font-size:15px; padding:12px; }
+  input#imageUrl:focus, input#headline:focus{ border-color:var(--amber); }
+  .img-hint{font-size:11.5px; color:var(--muted); margin-top:6px; font-style:italic;}
+  #imgPreview{display:none; max-height:140px; border-radius:2px; margin-top:10px; border:1px solid var(--paper-edge);}
+
+  .actions{display:flex; gap:10px; margin-top:20px; flex-wrap:wrap;}
+  button{
+    font-family:'JetBrains Mono',monospace; font-weight:600; font-size:12.5px; letter-spacing:0.04em;
+    padding:11px 16px; border-radius:2px; border:none; cursor:pointer; transition:opacity .15s, transform .1s;
+  }
+  button:active{transform:scale(0.98);}
+  button:disabled{opacity:0.45; cursor:not-allowed;}
+  .btn-amber{background:var(--amber); color:#04150A;}
+  .btn-amber:hover:not(:disabled){opacity:0.88;}
+  .btn-dark{background:#04150A; color:var(--green); border:1px solid var(--amber-dim);}
+  .btn-dark:hover:not(:disabled){opacity:0.85;}
+
+  #statusMsg{margin-top:14px; font-size:12.5px; line-height:1.5;}
+  #statusMsg.ok{color:#1F7A47;}
+  #statusMsg.err{color:#B5392F;}
+  #fallback{
+    display:none; margin-top:10px; background:#04150A; color:#C9FFD9;
+    padding:14px; border-radius:3px; font-size:11.5px; line-height:1.6; overflow-x:auto; white-space:pre-wrap;
+  }
+
+  /* ---- Right panel ---- */
+  .panel{background:var(--panel); border:1px solid var(--panel-edge); border-radius:3px; padding:18px 18px 20px; margin-bottom:18px;}
+  .panel h3{font-size:12px; letter-spacing:0.1em; text-transform:uppercase; color:var(--amber); margin:0 0 12px;}
+  summary{cursor:pointer; font-size:12.5px; letter-spacing:0.06em; color:var(--text); list-style:none; display:flex; align-items:center; gap:8px;}
+  summary::-webkit-details-marker{display:none;}
+  summary:before{content:"▸"; color:var(--amber); font-size:10px;}
+  details[open] summary:before{content:"▾";}
+  .cred-body{margin-top:14px; display:flex; flex-direction:column; gap:10px;}
+  .panel label{font-size:10.5px; color:var(--muted); letter-spacing:0.06em; text-transform:uppercase;}
+  .panel input{
+    width:100%; padding:9px 10px; font-family:'JetBrains Mono',monospace; font-size:12px;
+    background:#0E1115; border:1px solid var(--panel-edge); color:var(--text); border-radius:2px; outline:none; margin-top:4px;
+  }
+  .panel input:focus{border-color:var(--amber-dim);}
+  .help{font-size:10.5px; color:var(--muted); line-height:1.5; margin-top:2px;}
+  .conn-row{display:flex; align-items:center; gap:7px; font-size:11px; margin-top:6px; color:var(--muted);}
+
+  .log-list{list-style:none; margin:0; padding:0; display:flex; flex-direction:column; gap:9px; max-height:340px; overflow-y:auto;}
+  .log-item{font-size:11.5px; border-left:2px solid var(--amber-dim); padding-left:10px; line-height:1.45;}
+  .log-item .ts{color:var(--muted); display:block; font-size:10px; margin-bottom:2px;}
+  .log-empty{font-size:11.5px; color:var(--muted); font-style:italic;}
+</style>
+</head>
+<body>
+
+<div class="topbar">
+  <div class="wordmark">AI WIRE DESK <span id="dateLabel"></span></div>
+  <div class="status-pill"><span class="dot" id="connDot"></span><span id="connLabel">NOT CONNECTED</span></div>
+</div>
+
+<div class="ticker-wrap">
+  <div class="ticker" id="ticker">WIRE QUIET — GENERATE TODAY'S DRAFT TO PULL HEADLINES — WIRE QUIET — GENERATE TODAY'S DRAFT TO PULL HEADLINES — </div>
+</div>
+
+<div class="grid">
+  <section class="draft-card">
+    <div class="perforation"></div>
+    <div class="card-inner">
+      <div class="eyebrow"><span>DISPATCH — <span id="dispatchDate"></span></span><span id="charLabel"></span></div>
+
+      <div class="field-label">Headline (AI pulls this from today's AI news — edit freely)</div>
+      <input id="headline" type="text" placeholder="Click &quot;Generate Draft&quot; to pull today's AI news">
+      <div class="img-hint" id="similarWarning" style="display:none; color:#FF6258;"></div>
+
+      <div class="field-label" style="margin-top:18px;">Caption (AI drafts this — edit freely)</div>
+      <textarea id="caption" placeholder="Click &quot;Generate Draft&quot; to write a caption to match."></textarea>
+      <div class="charcount"><span id="charcount">0</span> / 2200 characters</div>
+
+      <div class="field-label">Image (built from the headline above — regenerate after editing it)</div>
+      <input id="imageUrl" type="text" placeholder="Click &quot;Generate Image&quot; once you're happy with the headline — or paste your own URL">
+      <div class="img-hint" id="imgHint">The graphic burns in whatever headline is currently in the box above, so edit the headline first, then generate the image.</div>
+      <img id="imgPreview">
+
+      <div class="actions">
+        <button class="btn-amber" id="genBtn">Generate Draft</button>
+        <button class="btn-amber" id="genImgBtn">Generate Image</button>
+        <button class="btn-dark" id="postBtn">Post to Instagram</button>
+      </div>
+      <div class="img-hint" id="postGuardNote" style="display:none;"></div>
+      <div id="statusMsg"></div>
+      <pre id="fallback"></pre>
+    </div>
+  </section>
+
+  <aside>
+    <div class="panel">
+      <h3>Desk Credentials</h3>
+      <details id="credDetails">
+        <summary>Access Token & Account ID</summary>
+        <div class="cred-body">
+          <div>
+            <label>Instagram Business Account ID</label>
+            <input id="igId" type="text" placeholder="1789...">
+          </div>
+          <div>
+            <label>Access Token</label>
+            <input id="token" type="password" placeholder="EAAG...">
+          </div>
+          <div>
+            <label>Anthropic API Key</label>
+            <input id="apiKey" type="password" placeholder="sk-ant-...">
+          </div>
+          <div>
+            <label>OpenAI API Key</label>
+            <input id="openaiKey" type="password" placeholder="sk-...">
+          </div>
+          <div>
+            <label>ImgBB API Key</label>
+            <input id="imgbbKey" type="password" placeholder="from api.imgbb.com">
+          </div>
+          <div>
+            <label>Generate Draft Using</label>
+            <select id="provider" style="width:100%; padding:9px 10px; font-family:'JetBrains Mono',monospace; font-size:12px; background:#0E1115; border:1px solid var(--panel-edge); color:var(--text); border-radius:2px; outline:none; margin-top:4px;">
+              <option value="anthropic">Claude (Anthropic)</option>
+              <option value="openai">OpenAI</option>
+            </select>
+          </div>
+          <button class="btn-amber" id="saveCredsBtn" style="margin-top:6px;">Save</button>
+          <div class="help">All keys stored only in this browser, on this computer. You can save both providers and switch the dropdown anytime — only the selected one is used.</div>
+        </div>
+      </details>
+    </div>
+
+    <div class="panel">
+      <h3 style="display:flex; justify-content:space-between; align-items:center;">Dispatch Log <button id="clearLogBtn" style="background:none; border:1px solid var(--panel-edge); color:var(--muted); font-size:10px; padding:4px 8px; text-transform:none; letter-spacing:0;">Clear</button></h3>
+      <ul class="log-list" id="logList"><li class="log-empty">No activity yet.</li></ul>
+    </div>
+
+    <div class="panel">
+      <h3>Recently Posted Topics</h3>
+      <ul class="log-list" id="historyList"><li class="log-empty">Nothing posted yet.</li></ul>
+    </div>
+  </aside>
+</div>
+
+<script>
+const $ = (id) => document.getElementById(id);
+const today = new Date();
+const dateStr = today.toLocaleDateString('en-US', { month:'short', day:'numeric', year:'numeric' });
+$('dateLabel').textContent = '· ' + dateStr;
+$('dispatchDate').textContent = dateStr;
+
+async function storeGet(key){
+  try{ const v = localStorage.getItem(key); return v ? JSON.parse(v) : null; }
+  catch(e){ return null; }
+}
+async function storeSet(key, value){
+  try{ localStorage.setItem(key, JSON.stringify(value)); return true; }
+  catch(e){ return false; }
+}
+
+let creds = { igId:'', token:'', apiKey:'', openaiKey:'', imgbbKey:'', provider:'anthropic' };
+let log = [];
+let history = []; // [{headline, date}] of actually posted topics
+let lastGeneratedHeadline = null; // headline the current caption+image were actually built from
+
+function updatePostButtonState(){
+  const connected = creds.igId && creds.token;
+  const current = $('headline').value.trim();
+  const matches = lastGeneratedHeadline !== null && current === lastGeneratedHeadline && current !== '';
+  $('postBtn').disabled = !(connected && matches);
+  const note = $('postGuardNote');
+  if(!connected){
+    note.style.display = 'block';
+    note.textContent = 'Save your Instagram credentials before posting.';
+  } else if(!matches){
+    note.style.display = 'block';
+    note.textContent = current
+      ? 'No image built for this exact headline yet — click "Generate Image" before posting.'
+      : 'Generate a draft (or type a headline) and build an image before posting.';
+  } else {
+    note.style.display = 'none';
+  }
+}
+
+function renderConn(){
+  const connected = creds.igId && creds.token;
+  $('connDot').classList.toggle('on', !!connected);
+  $('connLabel').textContent = connected ? 'CONNECTED' : 'NOT CONNECTED';
+  updatePostButtonState();
+}
+
+const STOPWORDS = new Set(['the','a','an','of','to','in','on','for','and','with','at','is','are','its','it','new','says','this','that','as','by','from','after','over']);
+function wordsOf(text){
+  return new Set((text||'').toLowerCase().replace(/[^a-z0-9\s]/g,' ').split(/\s+/).filter(w => w && !STOPWORDS.has(w)));
+}
+function similarity(a, b){
+  const wa = wordsOf(a), wb = wordsOf(b);
+  if(wa.size === 0 || wb.size === 0) return 0;
+  let overlap = 0;
+  wa.forEach(w => { if(wb.has(w)) overlap++; });
+  return overlap / Math.min(wa.size, wb.size);
+}
+function findSimilarPast(headline){
+  for(const h of history){
+    if(similarity(headline, h.headline) >= 0.5) return h;
+  }
+  return null;
+}
+function checkHeadlineSimilarity(){
+  const headline = $('headline').value.trim();
+  const warn = $('similarWarning');
+  if(!headline){ warn.style.display = 'none'; return; }
+  const match = findSimilarPast(headline);
+  if(match){
+    warn.style.display = 'block';
+    warn.textContent = `Looks similar to a topic posted on ${match.date} ("${match.headline}"). Generate will try a fresh angle, or rewrite the headline.`;
+  } else {
+    warn.style.display = 'none';
+  }
+}
+async function recordHistory(headline){
+  history.unshift({ headline, date: dateStr });
+  history = history.slice(0, 30);
+  await storeSet('desk:history', history);
+  renderHistory();
+}
+function renderHistory(){
+  const list = $('historyList');
+  if(!history.length){ list.innerHTML = '<li class="log-empty">Nothing posted yet.</li>'; return; }
+  list.innerHTML = history.map(h => `<li class="log-item"><span class="ts">${h.date}</span>${h.headline}</li>`).join('');
+}
+
+function addLog(text, tone){
+  const ts = new Date().toLocaleTimeString('en-US', {hour:'2-digit', minute:'2-digit'});
+  log.unshift({ text, tone: tone||'', ts: dateStr + ' ' + ts });
+  log = log.slice(0, 25);
+  renderLog();
+  storeSet('desk:log', log);
+}
+function renderLog(){
+  const list = $('logList');
+  if(!log.length){ list.innerHTML = '<li class="log-empty">No activity yet.</li>'; return; }
+  list.innerHTML = log.map(l => `<li class="log-item" style="border-left-color:${l.tone==='err' ? 'var(--red)' : l.tone==='ok' ? 'var(--green)' : 'var(--amber-dim)'}"><span class="ts">${l.ts}</span>${l.text}</li>`).join('');
+}
+
+$('clearLogBtn').addEventListener('click', async () => {
+  log = [];
+  renderLog();
+  await storeSet('desk:log', log);
+});
+
+$('headline').addEventListener('input', () => {
+  checkHeadlineSimilarity();
+  updatePostButtonState();
+});
+
+$('caption').addEventListener('input', () => {
+  $('charcount').textContent = $('caption').value.length;
+});
+$('imageUrl').addEventListener('input', () => {
+  const url = $('imageUrl').value.trim();
+  const img = $('imgPreview');
+  if(url){ img.src = url; img.style.display = 'block'; img.onerror = () => img.style.display='none'; }
+  else { img.style.display = 'none'; }
+});
+
+$('saveCredsBtn').addEventListener('click', async () => {
+  creds.igId = $('igId').value.trim();
+  creds.token = $('token').value.trim();
+  creds.apiKey = $('apiKey').value.trim();
+  creds.openaiKey = $('openaiKey').value.trim();
+  creds.imgbbKey = $('imgbbKey').value.trim();
+  creds.provider = $('provider').value;
+  await storeSet('desk:creds', creds);
+  renderConn();
+  addLog('Credentials saved.', 'ok');
+});
+
+// ---- Generate draft via Claude and/or OpenAI, with automatic fallback ----
+// ---- Draw the headline graphic on canvas, return a Blob ----
+async function buildHeadlineImage(headline, category){
+  const canvas = document.createElement('canvas');
+  canvas.width = 1080; canvas.height = 1080;
+  const ctx = canvas.getContext('2d');
+
+  ctx.fillStyle = '#060A07';
+  ctx.fillRect(0, 0, 1080, 1080);
+
+  ctx.fillStyle = '#39FF74';
+  ctx.fillRect(0, 0, 1080, 14);
+  ctx.fillRect(0, 1066, 1080, 14);
+
+  ctx.font = '600 28px "JetBrains Mono", monospace';
+  ctx.fillStyle = '#39FF74';
+  ctx.textBaseline = 'top';
+  ctx.fillText('AI PULSE TODAY', 64, 70);
+  ctx.font = '500 22px "JetBrains Mono", monospace';
+  ctx.fillStyle = '#5C9C74';
+  ctx.fillText(dateStr.toUpperCase(), 64, 110);
+
+  if(category){
+    ctx.font = '700 24px "JetBrains Mono", monospace';
+    const tag = category.toUpperCase();
+    const tw = ctx.measureText(tag).width;
+    ctx.fillStyle = '#39FF74';
+    ctx.fillRect(64, 170, tw + 32, 44);
+    ctx.fillStyle = '#060A07';
+    ctx.fillText(tag, 80, 182);
+  }
+
+  ctx.fillStyle = '#C9FFD9';
+  ctx.font = '700 64px "Source Serif 4", serif';
+  ctx.textBaseline = 'alphabetic';
+  const maxWidth = 952;
+  const words = headline.split(/\s+/);
+  let lines = []; let line = '';
+  for(const w of words){
+    const test = line ? line + ' ' + w : w;
+    if(ctx.measureText(test).width > maxWidth && line){ lines.push(line); line = w; }
+    else line = test;
+  }
+  if(line) lines.push(line);
+  lines = lines.slice(0, 5);
+
+  const lineHeight = 78;
+  const startY = 1080/2 - (lines.length * lineHeight)/2 + lineHeight - 20;
+  lines.forEach((l, i) => ctx.fillText(l, 64, startY + i*lineHeight));
+
+  return new Promise(resolve => canvas.toBlob(resolve, 'image/png'));
+}
+
+// ---- Upload a Blob to ImgBB, return public URL ----
+async function uploadImage(blob){
+  if(!creds.imgbbKey) throw new Error('No ImgBB API key saved');
+  const form = new FormData();
+  form.append('image', blob, 'headline.png');
+  const res = await fetch('https://api.imgbb.com/1/upload?key=' + encodeURIComponent(creds.imgbbKey), {
+    method:'POST',
+    body: form
+  });
+  const data = await res.json();
+  if(!data.success) throw new Error('ImgBB upload failed: ' + (data.error && data.error.message ? data.error.message : 'unknown error'));
+  return data.data.url;
+}
+
+// ---- Generate caption (AI, from your headline) + image (canvas + Imgur) ----
+async function callAnthropic(prompt){
+  const res = await fetch('https://api.anthropic.com/v1/messages', {
+    method:'POST',
+    headers:{
+      'Content-Type':'application/json',
+      'x-api-key': creds.apiKey,
+      'anthropic-version': '2023-06-01',
+      'anthropic-dangerous-direct-browser-access': 'true'
+    },
+    body: JSON.stringify({
+      model:'claude-sonnet-4-6',
+      max_tokens:1000,
+      messages:[{ role:'user', content: prompt }],
+      tools:[{ type:'web_search_20250305', name:'web_search' }]
+    })
+  });
+  const data = await res.json();
+  if(data.error) throw new Error('Anthropic: ' + (data.error.message || 'API error.'));
+  return (data.content || []).filter(b => b.type === 'text').map(b => b.text).join('\n');
+}
+
+async function callOpenAI(prompt){
+  const res = await fetch('https://api.openai.com/v1/responses', {
+    method:'POST',
+    headers:{
+      'Content-Type':'application/json',
+      'Authorization': 'Bearer ' + creds.openaiKey
+    },
+    body: JSON.stringify({
+      model:'gpt-4.1',
+      tools:[{ type:'web_search_preview' }],
+      input: prompt
+    })
+  });
+  const data = await res.json();
+  if(data.error) throw new Error('OpenAI: ' + (data.error.message || 'API error.'));
+  const messageItems = (data.output || []).filter(o => o.type === 'message');
+  return messageItems.flatMap(m => (m.content || []).filter(c => c.type === 'output_text').map(c => c.text)).join('\n');
+}
+
+$('genBtn').addEventListener('click', async () => {
+  const btn = $('genBtn');
+  const primary = creds.provider || 'anthropic';
+  const secondary = primary === 'anthropic' ? 'openai' : 'anthropic';
+  const hasPrimaryKey = primary === 'anthropic' ? !!creds.apiKey : !!creds.openaiKey;
+  const hasSecondaryKey = secondary === 'anthropic' ? !!creds.apiKey : !!creds.openaiKey;
+
+  if(!hasPrimaryKey && !hasSecondaryKey){
+    $('statusMsg').className = 'err';
+    $('statusMsg').textContent = 'Add at least one API key (Anthropic or OpenAI) in Desk Credentials first.';
+    return;
+  }
+  btn.disabled = true;
+  const original = btn.textContent;
+  btn.textContent = 'Pulling headlines…';
+  $('statusMsg').className = ''; $('statusMsg').textContent = '';
+  $('fallback').style.display = 'none';
+
+  const recentTopics = history.slice(0, 8).map(h => `"${h.headline}" (${h.date})`).join(', ');
+  const avoidNote = recentTopics ? ` These topics were already posted recently — pick a different story, or if it's a continuing story, find a genuinely fresh angle or new detail rather than repeating: ${recentTopics}.` : '';
+  const prompt = `Search for 1 genuinely interesting, recent AI news story (a new model release, notable research, product launch, or policy shift).${avoidNote} Write a punchy 1-2 line news-style headline for it (under 90 characters). Then write an Instagram caption built around that headline: a punchy opening line, 2-4 short paragraphs in a clear, opinionated voice (not generic news-recap tone), and end with 6-8 relevant hashtags. Keep the caption under 1500 characters. Also give a short 1-3 word category tag for this story (e.g. "MODEL RELEASE", "AI POLICY", "PRODUCT LAUNCH"). Respond with ONLY raw JSON, no markdown fences, no preamble, in this exact shape: {"headline":"the headline text","caption":"the full instagram caption text","category":"the category tag"}`;
+
+  try{
+    let textBlocks = '';
+    let usedFallback = false;
+
+    const callFor = (p) => p === 'anthropic' ? callAnthropic(prompt) : callOpenAI(prompt);
+
+    if(hasPrimaryKey){
+      try{
+        textBlocks = await callFor(primary);
+      } catch(primaryErr){
+        if(hasSecondaryKey){
+          usedFallback = true;
+          addLog(`${primary} failed (${primaryErr.message}) — falling back to ${secondary}.`, 'err');
+          btn.textContent = 'Retrying with backup…';
+          textBlocks = await callFor(secondary);
+        } else {
+          throw primaryErr;
+        }
+      }
+    } else {
+      usedFallback = true;
+      textBlocks = await callFor(secondary);
+    }
+
+    let cleaned = textBlocks.trim().replace(/^```json/i,'').replace(/^```/,'').replace(/```$/,'').trim();
+    let parsed;
+    try{ parsed = JSON.parse(cleaned); }
+    catch(e){
+      const match = cleaned.match(/\{[\s\S]*\}/);
+      if(match) parsed = JSON.parse(match[0]);
+      else throw new Error('Could not parse a draft from the response.');
+    }
+
+    $('headline').value = parsed.headline || '';
+    $('caption').value = parsed.caption || '';
+    $('charcount').textContent = $('caption').value.length;
+    $('ticker').textContent = ('WIRE: ' + (parsed.headline || '').replace(/\n/g,' ') + '  —  ').repeat(8);
+    checkHeadlineSimilarity();
+
+    const draft = { caption: parsed.caption, headline: parsed.headline, category: parsed.category, imageUrl: '', date: dateStr };
+    await storeSet('desk:draft', draft);
+    lastGeneratedHeadline = null; // image hasn't been built for this headline yet
+    updatePostButtonState();
+    addLog('Draft generated' + (usedFallback ? ' (via backup provider)' : '') + ': "' + (parsed.headline || 'untitled') + '" — edit as needed, then Generate Image.', 'ok');
+  } catch(err){
+    $('statusMsg').className = 'err';
+    $('statusMsg').textContent = "Couldn't generate: " + err.message;
+    addLog('Generation failed: ' + err.message, 'err');
+  } finally {
+    btn.disabled = false;
+    btn.textContent = original;
+  }
+});
+
+$('genImgBtn').addEventListener('click', async () => {
+  const btn = $('genImgBtn');
+  const headline = $('headline').value.trim();
+  if(!headline){
+    $('statusMsg').className = 'err';
+    $('statusMsg').textContent = 'Type or generate a headline first — the image is built from it.';
+    return;
+  }
+  btn.disabled = true;
+  const original = btn.textContent;
+  $('statusMsg').className = ''; $('statusMsg').textContent = '';
+
+  try{
+    const draft = (await storeGet('desk:draft')) || {};
+    btn.textContent = 'Building graphic…';
+    const blob = await buildHeadlineImage(headline, draft.category);
+    btn.textContent = 'Uploading graphic…';
+    const imageUrl = await uploadImage(blob);
+    $('imageUrl').value = imageUrl;
+    $('imgPreview').src = imageUrl;
+    $('imgPreview').style.display = 'block';
+    $('imgHint').textContent = 'Graphic generated and uploaded automatically from this headline.';
+
+    draft.headline = headline;
+    draft.imageUrl = imageUrl;
+    draft.date = dateStr;
+    await storeSet('desk:draft', draft);
+    lastGeneratedHeadline = headline;
+    updatePostButtonState();
+    addLog('Image built for: "' + headline + '"', 'ok');
+  } catch(err){
+    $('imgHint').textContent = 'Image failed (' + err.message + ') — paste your own URL above instead.';
+    addLog('Image generation/upload failed: ' + err.message, 'err');
+  } finally {
+    btn.disabled = false;
+    btn.textContent = original;
+  }
+});
+
+// ---- Post to Instagram via Graph API ----
+function sleep(ms){ return new Promise(r => setTimeout(r, ms)); }
+
+$('postBtn').addEventListener('click', async () => {
+  const btn = $('postBtn');
+  const caption = $('caption').value.trim();
+  const imageUrl = $('imageUrl').value.trim();
+  $('statusMsg').className = ''; $('statusMsg').textContent = '';
+  $('fallback').style.display = 'none';
+
+  if(!caption || !imageUrl){
+    $('statusMsg').className = 'err';
+    $('statusMsg').textContent = 'Add both a caption and an image URL before posting.';
+    return;
+  }
+  if(!creds.igId || !creds.token){
+    $('statusMsg').className = 'err';
+    $('statusMsg').textContent = 'Save your Access Token and Account ID first.';
+    return;
+  }
+
+  btn.disabled = true;
+  const original = btn.textContent;
+  const V = 'v21.0';
+  const base = 'https://graph.instagram.com/' + V;
+
+  function showFallback(){
+    const cmd1 = `curl -X POST "${base}/${creds.igId}/media" \\\n  -d "image_url=${imageUrl}" \\\n  -d "caption=${caption.replace(/"/g,'\\"')}" \\\n  -d "access_token=${creds.token}"`;
+    const cmd2 = `# take the "id" from the response above, then poll:\ncurl "${base}/CONTAINER_ID?fields=status_code&access_token=${creds.token}"`;
+    const cmd3 = `# once status_code is FINISHED:\ncurl -X POST "${base}/${creds.igId}/media_publish" \\\n  -d "creation_id=CONTAINER_ID" \\\n  -d "access_token=${creds.token}"`;
+    $('fallback').style.display = 'block';
+    $('fallback').textContent = "Browser-to-Graph-API calls are often blocked by CORS. Run these from a terminal instead:\n\n" + cmd1 + "\n\n" + cmd2 + "\n\n" + cmd3;
+  }
+
+  try{
+    btn.textContent = 'Creating container…';
+    const createRes = await fetch(`${base}/${creds.igId}/media?image_url=${encodeURIComponent(imageUrl)}&caption=${encodeURIComponent(caption)}&access_token=${encodeURIComponent(creds.token)}`, { method:'POST' });
+    const createData = await createRes.json();
+    if(createData.error) throw new Error(createData.error.message || 'Container creation failed.');
+    const containerId = createData.id;
+
+    btn.textContent = 'Processing…';
+    let status = '';
+    for(let i=0;i<10;i++){
+      await sleep(2000);
+      const pollRes = await fetch(`${base}/${containerId}?fields=status_code&access_token=${encodeURIComponent(creds.token)}`);
+      const pollData = await pollRes.json();
+      status = pollData.status_code;
+      if(status === 'FINISHED' || status === 'ERROR') break;
+    }
+    if(status === 'ERROR') throw new Error('Instagram reported an error processing the media.');
+
+    btn.textContent = 'Publishing…';
+    const pubRes = await fetch(`${base}/${creds.igId}/media_publish?creation_id=${containerId}&access_token=${encodeURIComponent(creds.token)}`, { method:'POST' });
+    const pubData = await pubRes.json();
+    if(pubData.error) throw new Error(pubData.error.message || 'Publish failed.');
+
+    $('statusMsg').className = 'ok';
+    $('statusMsg').textContent = 'Posted to Instagram — media ID ' + pubData.id;
+    addLog('Posted live: "' + caption.slice(0,40) + '…"', 'ok');
+    const postedHeadline = $('headline').value.trim();
+    if(postedHeadline) await recordHistory(postedHeadline);
+  } catch(err){
+    $('statusMsg').className = 'err';
+    $('statusMsg').textContent = 'Post failed: ' + err.message + ' — fallback commands below.';
+    addLog('Post failed: ' + err.message, 'err');
+    showFallback();
+  } finally {
+    btn.disabled = false;
+    btn.textContent = original;
+  }
+});
+
+// ---- init ----
+(async function init(){
+  creds = (await storeGet('desk:creds')) || { igId:'', token:'', apiKey:'', openaiKey:'', imgbbKey:'', provider:'anthropic' };
+  $('igId').value = creds.igId || '';
+  $('token').value = creds.token || '';
+  $('apiKey').value = creds.apiKey || '';
+  $('openaiKey').value = creds.openaiKey || '';
+  $('imgbbKey').value = creds.imgbbKey || '';
+  $('provider').value = creds.provider || 'anthropic';
+  renderConn();
+
+  log = (await storeGet('desk:log')) || [];
+  renderLog();
+
+  history = (await storeGet('desk:history')) || [];
+  renderHistory();
+
+  const draft = await storeGet('desk:draft');
+  if(draft && draft.date === dateStr){
+    $('headline').value = draft.headline || '';
+    $('caption').value = draft.caption || '';
+    $('charcount').textContent = $('caption').value.length;
+    if(draft.headline) $('ticker').textContent = ('WIRE: ' + draft.headline.replace(/\n/g,' ') + '  —  ').repeat(8);
+    if(draft.imageUrl){
+      $('imageUrl').value = draft.imageUrl;
+      $('imgPreview').src = draft.imageUrl;
+      $('imgPreview').style.display = 'block';
+      $('imgHint').textContent = 'Graphic generated and uploaded automatically from your headline.';
+    }
+    lastGeneratedHeadline = draft.headline || null;
+    checkHeadlineSimilarity();
+  }
+  updatePostButtonState();
+})();
+</script>
+</body>
+</html>
