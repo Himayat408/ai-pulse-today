@@ -384,15 +384,58 @@ $('saveCredsBtn').addEventListener('click', async () => {
   addLog('Credentials saved.', 'ok');
 });
 
-// ---- Generate draft via Claude and/or OpenAI, with automatic fallback ----
-// ---- Draw the headline graphic on canvas, return a Blob ----
-async function buildHeadlineImage(headline, category){
+// ---- Generate an AI visual background via OpenAI's image model ----
+async function generateAIBackground(headline, category){
+  if(!creds.openaiKey) return null;
+  const visualPrompt = `Editorial illustration for an AI/tech news graphic. Subject: ${category || 'AI news'} — "${headline}". Vibrant, colorful, dramatic studio lighting, rich saturated color palette (blues, purples, magentas, teals, oranges) — not monochrome, not desaturated. Modern abstract tech aesthetic. No text, no words, no letters anywhere in the image. Square composition with strong dark contrast areas (not necessarily green) toward the lower-left suitable for white text overlay.`;
+  const res = await fetch('https://api.openai.com/v1/images/generations', {
+    method:'POST',
+    headers:{
+      'Content-Type':'application/json',
+      'Authorization': 'Bearer ' + creds.openaiKey
+    },
+    body: JSON.stringify({
+      model:'gpt-image-1',
+      prompt: visualPrompt,
+      size:'1024x1024',
+      quality:'low'
+    })
+  });
+  const data = await res.json();
+  if(data.error) throw new Error('OpenAI image: ' + (data.error.message || 'generation failed.'));
+  const b64 = data.data && data.data[0] && data.data[0].b64_json;
+  if(!b64) throw new Error('OpenAI image: no image data returned.');
+  const img = new Image();
+  await new Promise((resolve, reject) => {
+    img.onload = resolve;
+    img.onerror = () => reject(new Error('Generated image failed to load.'));
+    img.src = 'data:image/png;base64,' + b64;
+  });
+  return img;
+}
+
+// ---- Draw the headline graphic on canvas (with optional AI background), return a Blob ----
+async function buildHeadlineImage(headline, category, bgImage){
   const canvas = document.createElement('canvas');
   canvas.width = 1080; canvas.height = 1080;
   const ctx = canvas.getContext('2d');
 
-  ctx.fillStyle = '#060A07';
-  ctx.fillRect(0, 0, 1080, 1080);
+  if(bgImage){
+    // cover-fit the AI image into the square canvas
+    const scale = Math.max(1080/bgImage.width, 1080/bgImage.height);
+    const w = bgImage.width*scale, h = bgImage.height*scale;
+    ctx.drawImage(bgImage, (1080-w)/2, (1080-h)/2, w, h);
+    // dark scrim so text stays readable over any photo — neutral black, not tinted, so original colors show through
+    const grad = ctx.createLinearGradient(0, 1080, 0, 0);
+    grad.addColorStop(0, 'rgba(0,0,0,0.80)');
+    grad.addColorStop(0.5, 'rgba(0,0,0,0.35)');
+    grad.addColorStop(1, 'rgba(0,0,0,0.12)');
+    ctx.fillStyle = grad;
+    ctx.fillRect(0, 0, 1080, 1080);
+  } else {
+    ctx.fillStyle = '#060A07';
+    ctx.fillRect(0, 0, 1080, 1080);
+  }
 
   ctx.fillStyle = '#39FF74';
   ctx.fillRect(0, 0, 1080, 14);
@@ -582,14 +625,27 @@ $('genImgBtn').addEventListener('click', async () => {
 
   try{
     const draft = (await storeGet('desk:draft')) || {};
+
+    let bgImage = null;
+    let usedAI = false;
+    try{
+      btn.textContent = 'Generating AI visual…';
+      bgImage = await generateAIBackground(headline, draft.category);
+      usedAI = !!bgImage;
+    } catch(bgErr){
+      addLog('AI visual failed (' + bgErr.message + ') — using plain background instead.', 'err');
+    }
+
     btn.textContent = 'Building graphic…';
-    const blob = await buildHeadlineImage(headline, draft.category);
+    const blob = await buildHeadlineImage(headline, draft.category, bgImage);
     btn.textContent = 'Uploading graphic…';
     const imageUrl = await uploadImage(blob);
     $('imageUrl').value = imageUrl;
     $('imgPreview').src = imageUrl;
     $('imgPreview').style.display = 'block';
-    $('imgHint').textContent = 'Graphic generated and uploaded automatically from this headline.';
+    $('imgHint').textContent = usedAI
+      ? 'AI-generated visual + headline overlay, uploaded automatically.'
+      : 'Plain background used (no OpenAI key, or AI visual failed) — graphic still uploaded.';
 
     draft.headline = headline;
     draft.imageUrl = imageUrl;
@@ -597,7 +653,7 @@ $('genImgBtn').addEventListener('click', async () => {
     await storeSet('desk:draft', draft);
     lastGeneratedHeadline = headline;
     updatePostButtonState();
-    addLog('Image built for: "' + headline + '"', 'ok');
+    addLog('Image built' + (usedAI ? ' (AI visual)' : ' (plain)') + ' for: "' + headline + '"', 'ok');
   } catch(err){
     $('imgHint').textContent = 'Image failed (' + err.message + ') — paste your own URL above instead.';
     addLog('Image generation/upload failed: ' + err.message, 'err');
