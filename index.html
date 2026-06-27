@@ -178,6 +178,28 @@
       <div class="img-hint" id="postGuardNote" style="display:none;"></div>
       <div id="statusMsg"></div>
       <pre id="fallback"></pre>
+
+      <div style="margin-top:28px; padding-top:20px; border-top:1px dashed var(--paper-edge);">
+        <div class="field-label" style="font-size:13px;">REEL STUDIO — turns this headline into a narrated video</div>
+        <div class="img-hint" id="reelHint">Builds a vertical video: narrated headline over an animated background, ready for Instagram Reels. Takes 15-30 seconds.</div>
+        <div style="margin-top:10px; max-width:220px;">
+          <label style="font-size:10.5px; color:var(--muted); letter-spacing:0.06em; text-transform:uppercase;">Narration Voice</label>
+          <select id="voice" style="width:100%; padding:9px 10px; font-family:'JetBrains Mono',monospace; font-size:12px; background:#04100A; border:1px solid var(--paper-edge); color:var(--ink); border-radius:2px; outline:none; margin-top:4px;">
+            <option value="alloy">Alloy — neutral, balanced</option>
+            <option value="echo">Echo — male, clear</option>
+            <option value="fable">Fable — warm, expressive</option>
+            <option value="onyx">Onyx — deep, male</option>
+            <option value="nova">Nova — female, energetic</option>
+            <option value="shimmer">Shimmer — female, soft</option>
+          </select>
+        </div>
+        <video id="reelPreview" style="display:none; width:100%; max-width:260px; margin-top:10px; border:1px solid var(--paper-edge); border-radius:2px;" controls></video>
+        <div class="actions" style="margin-top:12px;">
+          <button class="btn-amber" id="genReelBtn">Generate Reel</button>
+          <button class="btn-dark" id="postReelBtn">Post Reel to Instagram</button>
+        </div>
+        <div id="reelStatusMsg" style="margin-top:10px; font-size:12.5px;"></div>
+      </div>
     </div>
   </section>
 
@@ -206,6 +228,14 @@
           <div>
             <label>ImgBB API Key</label>
             <input id="imgbbKey" type="password" placeholder="from api.imgbb.com">
+          </div>
+          <div>
+            <label>Cloudinary Cloud Name</label>
+            <input id="cloudName" type="text" placeholder="from cloudinary.com dashboard">
+          </div>
+          <div>
+            <label>Cloudinary Upload Preset (unsigned)</label>
+            <input id="uploadPreset" type="text" placeholder="create one in Settings → Upload">
           </div>
           <div>
             <label>Generate Draft Using</label>
@@ -248,10 +278,11 @@ async function storeSet(key, value){
   catch(e){ return false; }
 }
 
-let creds = { igId:'', token:'', apiKey:'', openaiKey:'', imgbbKey:'', provider:'anthropic' };
+let creds = { igId:'', token:'', apiKey:'', openaiKey:'', imgbbKey:'', cloudName:'', uploadPreset:'', provider:'anthropic', voice:'alloy' };
 let log = [];
 let history = []; // [{headline, date}] of actually posted topics
 let lastGeneratedHeadline = null; // headline the current caption+image were actually built from
+let lastGeneratedReelHeadline = null;
 
 function updatePostButtonState(){
   const connected = creds.igId && creds.token;
@@ -351,15 +382,23 @@ $('resetBtn').addEventListener('click', async () => {
   $('statusMsg').className = ''; $('statusMsg').textContent = '';
   $('fallback').style.display = 'none';
   $('ticker').textContent = "WIRE QUIET — GENERATE TODAY'S DRAFT TO PULL HEADLINES — WIRE QUIET — GENERATE TODAY'S DRAFT TO PULL HEADLINES — ";
+  $('reelPreview').src = ''; $('reelPreview').style.display = 'none';
+  $('reelStatusMsg').style.color = ''; $('reelStatusMsg').textContent = '';
   lastGeneratedHeadline = null;
+  lastGeneratedReelHeadline = null;
   updatePostButtonState();
-  await storeSet('desk:draft', { caption:'', headline:'', category:'', imageUrl:'', date: dateStr });
-  addLog('Dispatch reset — headline, caption, and image cleared.', '');
+  await storeSet('desk:draft', { caption:'', headline:'', category:'', imageUrl:'', reelUrl:'', reelHeadline:'', date: dateStr });
+  addLog('Dispatch reset — headline, caption, image, and reel cleared.', '');
 });
 
 $('headline').addEventListener('input', () => {
   checkHeadlineSimilarity();
   updatePostButtonState();
+});
+
+$('voice').addEventListener('change', async () => {
+  creds.voice = $('voice').value;
+  await storeSet('desk:creds', creds);
 });
 
 $('caption').addEventListener('input', () => {
@@ -378,6 +417,8 @@ $('saveCredsBtn').addEventListener('click', async () => {
   creds.apiKey = $('apiKey').value.trim();
   creds.openaiKey = $('openaiKey').value.trim();
   creds.imgbbKey = $('imgbbKey').value.trim();
+  creds.cloudName = $('cloudName').value.trim();
+  creds.uploadPreset = $('uploadPreset').value.trim();
   creds.provider = $('provider').value;
   await storeSet('desk:creds', creds);
   renderConn();
@@ -492,6 +533,199 @@ async function uploadImage(blob){
   const data = await res.json();
   if(!data.success) throw new Error('ImgBB upload failed: ' + (data.error && data.error.message ? data.error.message : 'unknown error'));
   return data.data.url;
+}
+
+// ---- Text-to-speech narration via OpenAI ----
+async function generateNarration(text){
+  if(!creds.openaiKey) throw new Error('No OpenAI API key saved (needed for narration).');
+  const res = await fetch('https://api.openai.com/v1/audio/speech', {
+    method:'POST',
+    headers:{
+      'Content-Type':'application/json',
+      'Authorization': 'Bearer ' + creds.openaiKey
+    },
+    body: JSON.stringify({
+      model:'gpt-4o-mini-tts',
+      voice: creds.voice || 'alloy',
+      input: text
+    })
+  });
+  if(!res.ok){
+    let msg = 'TTS request failed (status ' + res.status + ').';
+    try{ const errJson = await res.json(); if(errJson.error) msg = 'OpenAI TTS: ' + errJson.error.message; } catch(e){}
+    throw new Error(msg);
+  }
+  return await res.blob();
+}
+
+// ---- Record an animated vertical video (canvas + narration audio + synced subtitles) as a webm Blob ----
+async function recordReelVideo(headline, category, bgImage, audioBlob, script){
+  const audioUrl = URL.createObjectURL(audioBlob);
+  const audioEl = new Audio();
+  audioEl.src = audioUrl;
+  await new Promise((resolve, reject) => {
+    audioEl.onloadedmetadata = resolve;
+    audioEl.onerror = () => reject(new Error('Narration audio failed to load.'));
+  });
+  const duration = Math.min(Math.max(audioEl.duration || 8, 3), 88);
+
+  // ---- Build subtitle chunks (3-4 words each), timed proportionally by character length ----
+  const scriptWords = (script || headline).trim().split(/\s+/);
+  const subtitleChunks = [];
+  for(let i=0; i<scriptWords.length; i += 3){
+    subtitleChunks.push(scriptWords.slice(i, i+3).join(' '));
+  }
+  const totalChars = subtitleChunks.reduce((sum, c) => sum + c.length, 0) || 1;
+  let elapsedChars = 0;
+  const subtitleTimings = subtitleChunks.map(chunk => {
+    const start = (elapsedChars / totalChars) * duration;
+    elapsedChars += chunk.length;
+    const end = (elapsedChars / totalChars) * duration;
+    return { text: chunk, start, end };
+  });
+
+  const canvas = document.createElement('canvas');
+  canvas.width = 1080; canvas.height = 1920;
+  const ctx = canvas.getContext('2d');
+
+  const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+  const sourceNode = audioCtx.createMediaElementSource(audioEl);
+  const destNode = audioCtx.createMediaStreamDestination();
+  sourceNode.connect(destNode);
+  sourceNode.connect(audioCtx.destination);
+
+  const videoStream = canvas.captureStream(30);
+  const combined = new MediaStream([...videoStream.getVideoTracks(), ...destNode.stream.getAudioTracks()]);
+
+  let mimeType = 'video/webm;codecs=vp8,opus';
+  if(!MediaRecorder.isTypeSupported(mimeType)) mimeType = 'video/webm';
+  const recorder = new MediaRecorder(combined, { mimeType });
+  const chunks = [];
+  recorder.ondataavailable = e => { if(e.data.size > 0) chunks.push(e.data); };
+
+  const words = headline.split(/\s+/);
+  let lines = []; let line = '';
+  ctx.font = '700 58px "Source Serif 4", serif';
+  const maxWidth = 920;
+  for(const w of words){
+    const test = line ? line + ' ' + w : w;
+    if(ctx.measureText(test).width > maxWidth && line){ lines.push(line); line = w; }
+    else line = test;
+  }
+  if(line) lines.push(line);
+  lines = lines.slice(0, 6);
+
+  function drawFrame(t){
+    const progress = Math.min(t / duration, 1);
+    const zoom = 1.05 + progress * 0.12; // slow Ken Burns zoom
+
+    if(bgImage){
+      const scale = Math.max(1080/bgImage.width, 1920/bgImage.height) * zoom;
+      const w = bgImage.width*scale, h = bgImage.height*scale;
+      ctx.drawImage(bgImage, (1080-w)/2, (1920-h)/2, w, h);
+      const grad = ctx.createLinearGradient(0, 1920, 0, 0);
+      grad.addColorStop(0, 'rgba(0,0,0,0.85)');
+      grad.addColorStop(0.45, 'rgba(0,0,0,0.40)');
+      grad.addColorStop(1, 'rgba(0,0,0,0.15)');
+      ctx.fillStyle = grad;
+      ctx.fillRect(0, 0, 1080, 1920);
+    } else {
+      ctx.fillStyle = '#060A07';
+      ctx.fillRect(0, 0, 1080, 1920);
+    }
+
+    ctx.fillStyle = '#39FF74';
+    ctx.fillRect(0, 0, 1080, 16);
+    ctx.fillRect(0, 1904, 1080, 16);
+
+    ctx.font = '600 30px "JetBrains Mono", monospace';
+    ctx.fillStyle = '#39FF74';
+    ctx.textBaseline = 'top';
+    ctx.fillText('AI PULSE TODAY', 64, 90);
+    ctx.font = '500 24px "JetBrains Mono", monospace';
+    ctx.fillStyle = '#5C9C74';
+    ctx.fillText(dateStr.toUpperCase(), 64, 134);
+
+    if(category){
+      ctx.font = '700 26px "JetBrains Mono", monospace';
+      const tag = category.toUpperCase();
+      const tw = ctx.measureText(tag).width;
+      ctx.fillStyle = '#39FF74';
+      ctx.fillRect(64, 200, tw + 32, 46);
+      ctx.fillStyle = '#060A07';
+      ctx.fillText(tag, 80, 212);
+    }
+
+    const fadeIn = Math.min(progress * 4, 1);
+    ctx.globalAlpha = fadeIn;
+    ctx.fillStyle = '#C9FFD9';
+    ctx.font = '700 58px "Source Serif 4", serif';
+    ctx.textBaseline = 'alphabetic';
+    const lineHeight = 70;
+    const startY = 1920/2 - (lines.length * lineHeight)/2 + lineHeight - 20;
+    lines.forEach((l, i) => ctx.fillText(l, 64, startY + i*lineHeight));
+    ctx.globalAlpha = 1;
+
+    // ---- synced subtitle, lower-third ----
+    const activeSub = subtitleTimings.find(s => t >= s.start && t < s.end);
+    if(activeSub){
+      ctx.font = '600 40px "JetBrains Mono", monospace';
+      ctx.textAlign = 'center';
+      const padX = 28, padY = 16;
+      const subText = activeSub.text.toUpperCase();
+      const tw = ctx.measureText(subText).width;
+      const boxW = Math.min(tw + padX*2, 980);
+      const boxX = 540 - boxW/2;
+      const boxY = 1630;
+      ctx.fillStyle = 'rgba(0,0,0,0.78)';
+      ctx.fillRect(boxX, boxY, boxW, 64);
+      ctx.fillStyle = '#39FF74';
+      ctx.fillText(subText, 540, boxY + 44);
+      ctx.textAlign = 'left';
+    }
+  }
+
+  return new Promise((resolve, reject) => {
+    recorder.onstop = () => {
+      audioCtx.close();
+      URL.revokeObjectURL(audioUrl);
+      resolve(new Blob(chunks, { type: 'video/webm' }));
+    };
+    recorder.onerror = (e) => reject(new Error('Recording failed: ' + e.error));
+
+    const start = performance.now();
+    recorder.start();
+    audioEl.play().catch(reject);
+
+    function loop(){
+      const elapsed = (performance.now() - start) / 1000;
+      drawFrame(elapsed);
+      if(elapsed < duration){
+        requestAnimationFrame(loop);
+      } else {
+        setTimeout(() => recorder.stop(), 150);
+      }
+    }
+    requestAnimationFrame(loop);
+  });
+}
+
+// ---- Upload a video Blob to Cloudinary (unsigned), return an Instagram-ready MP4 URL ----
+async function uploadReelVideo(blob){
+  if(!creds.cloudName || !creds.uploadPreset) throw new Error('Cloudinary Cloud Name / Upload Preset not saved.');
+  const form = new FormData();
+  form.append('file', blob, 'reel.webm');
+  form.append('upload_preset', creds.uploadPreset);
+  const res = await fetch(`https://api.cloudinary.com/v1_1/${creds.cloudName}/video/upload`, {
+    method:'POST',
+    body: form
+  });
+  const data = await res.json();
+  if(data.error) throw new Error('Cloudinary: ' + data.error.message);
+  const mp4Url = `https://res.cloudinary.com/${creds.cloudName}/video/upload/f_mp4,vc_h264,ac_aac/${data.public_id}.mp4`;
+  // warm the transformation so it's cached before Instagram fetches it
+  await fetch(mp4Url).catch(() => {});
+  return mp4Url;
 }
 
 // ---- Generate caption (AI, from your headline) + image (canvas + Imgur) ----
@@ -666,6 +900,120 @@ $('genImgBtn').addEventListener('click', async () => {
 // ---- Post to Instagram via Graph API ----
 function sleep(ms){ return new Promise(r => setTimeout(r, ms)); }
 
+$('genReelBtn').addEventListener('click', async () => {
+  const btn = $('genReelBtn');
+  const headline = $('headline').value.trim();
+  if(!headline){
+    $('reelStatusMsg').className = 'err'; $('reelStatusMsg').style.color = '#FF6258';
+    $('reelStatusMsg').textContent = 'Type or generate a headline first.';
+    return;
+  }
+  btn.disabled = true;
+  const original = btn.textContent;
+  $('reelStatusMsg').style.color = ''; $('reelStatusMsg').textContent = '';
+  $('reelPreview').style.display = 'none';
+
+  try{
+    const draft = (await storeGet('desk:draft')) || {};
+    const caption = $('caption').value.trim();
+    const firstSentence = (caption.split(/(?<=[.!?])\s/)[0] || '').slice(0, 160);
+    const script = (headline + '. ' + firstSentence).trim();
+
+    btn.textContent = 'Generating narration…';
+    const audioBlob = await generateNarration(script);
+
+    btn.textContent = 'Building AI visual…';
+    let bgImage = null;
+    try{ bgImage = await generateAIBackground(headline, draft.category); } catch(e){ /* fall back to plain bg, no error to user here */ }
+
+    btn.textContent = 'Recording video…';
+    const videoBlob = await recordReelVideo(headline, draft.category, bgImage, audioBlob, script);
+
+    btn.textContent = 'Uploading…';
+    const mp4Url = await uploadReelVideo(videoBlob);
+
+    $('reelPreview').src = URL.createObjectURL(videoBlob);
+    $('reelPreview').style.display = 'block';
+
+    draft.reelUrl = mp4Url;
+    draft.reelHeadline = headline;
+    await storeSet('desk:draft', draft);
+    lastGeneratedReelHeadline = headline;
+    $('reelStatusMsg').style.color = '#39FF74';
+    $('reelStatusMsg').textContent = 'Reel built and uploaded — preview above, ready to post.';
+    addLog('Reel built for: "' + headline + '"', 'ok');
+  } catch(err){
+    $('reelStatusMsg').style.color = '#FF6258';
+    $('reelStatusMsg').textContent = "Couldn't build reel: " + err.message;
+    addLog('Reel generation failed: ' + err.message, 'err');
+  } finally {
+    btn.disabled = false;
+    btn.textContent = original;
+  }
+});
+
+$('postReelBtn').addEventListener('click', async () => {
+  const btn = $('postReelBtn');
+  const headline = $('headline').value.trim();
+  const draft = (await storeGet('desk:draft')) || {};
+  const caption = $('caption').value.trim();
+
+  if(!draft.reelUrl || draft.reelHeadline !== headline){
+    $('reelStatusMsg').style.color = '#FF6258';
+    $('reelStatusMsg').textContent = 'No reel built for this exact headline yet — click "Generate Reel" first.';
+    return;
+  }
+  if(!creds.igId || !creds.token){
+    $('reelStatusMsg').style.color = '#FF6258';
+    $('reelStatusMsg').textContent = 'Save your Instagram credentials first.';
+    return;
+  }
+
+  btn.disabled = true;
+  const original = btn.textContent;
+  $('reelStatusMsg').style.color = '';
+  $('reelStatusMsg').textContent = '';
+  const V = 'v21.0';
+  const base = 'https://graph.instagram.com/' + V;
+
+  try{
+    btn.textContent = 'Creating container…';
+    const createRes = await fetch(`${base}/${creds.igId}/media?media_type=REELS&video_url=${encodeURIComponent(draft.reelUrl)}&caption=${encodeURIComponent(caption)}&access_token=${encodeURIComponent(creds.token)}`, { method:'POST' });
+    const createData = await createRes.json();
+    if(createData.error) throw new Error(createData.error.message || 'Container creation failed.');
+    const containerId = createData.id;
+
+    btn.textContent = 'Processing…';
+    let status = '';
+    for(let i=0;i<20;i++){
+      await sleep(3000);
+      const pollRes = await fetch(`${base}/${containerId}?fields=status_code&access_token=${encodeURIComponent(creds.token)}`);
+      const pollData = await pollRes.json();
+      status = pollData.status_code;
+      if(status === 'FINISHED' || status === 'ERROR') break;
+    }
+    if(status === 'ERROR') throw new Error('Instagram reported an error processing the reel.');
+    if(status !== 'FINISHED') throw new Error('Reel still processing after waiting — try posting again in a minute.');
+
+    btn.textContent = 'Publishing…';
+    const pubRes = await fetch(`${base}/${creds.igId}/media_publish?creation_id=${containerId}&access_token=${encodeURIComponent(creds.token)}`, { method:'POST' });
+    const pubData = await pubRes.json();
+    if(pubData.error) throw new Error(pubData.error.message || 'Publish failed.');
+
+    $('reelStatusMsg').style.color = '#39FF74';
+    $('reelStatusMsg').textContent = 'Reel posted to Instagram — media ID ' + pubData.id;
+    addLog('Reel posted live: "' + headline + '"', 'ok');
+    if(headline) await recordHistory(headline);
+  } catch(err){
+    $('reelStatusMsg').style.color = '#FF6258';
+    $('reelStatusMsg').textContent = 'Reel post failed: ' + err.message;
+    addLog('Reel post failed: ' + err.message, 'err');
+  } finally {
+    btn.disabled = false;
+    btn.textContent = original;
+  }
+});
+
 $('postBtn').addEventListener('click', async () => {
   const btn = $('postBtn');
   const caption = $('caption').value.trim();
@@ -738,13 +1086,16 @@ $('postBtn').addEventListener('click', async () => {
 
 // ---- init ----
 (async function init(){
-  creds = (await storeGet('desk:creds')) || { igId:'', token:'', apiKey:'', openaiKey:'', imgbbKey:'', provider:'anthropic' };
+  creds = (await storeGet('desk:creds')) || { igId:'', token:'', apiKey:'', openaiKey:'', imgbbKey:'', cloudName:'', uploadPreset:'', provider:'anthropic', voice:'alloy' };
   $('igId').value = creds.igId || '';
   $('token').value = creds.token || '';
   $('apiKey').value = creds.apiKey || '';
   $('openaiKey').value = creds.openaiKey || '';
   $('imgbbKey').value = creds.imgbbKey || '';
+  $('cloudName').value = creds.cloudName || '';
+  $('uploadPreset').value = creds.uploadPreset || '';
   $('provider').value = creds.provider || 'anthropic';
+  $('voice').value = creds.voice || 'alloy';
   renderConn();
 
   log = (await storeGet('desk:log')) || [];
@@ -767,6 +1118,14 @@ $('postBtn').addEventListener('click', async () => {
     }
     lastGeneratedHeadline = draft.headline || null;
     checkHeadlineSimilarity();
+
+    if(draft.reelUrl && draft.reelHeadline === draft.headline){
+      $('reelPreview').src = draft.reelUrl;
+      $('reelPreview').style.display = 'block';
+      lastGeneratedReelHeadline = draft.reelHeadline;
+      $('reelStatusMsg').style.color = '#39FF74';
+      $('reelStatusMsg').textContent = 'Reel from earlier today — ready to post.';
+    }
   }
   updatePostButtonState();
 })();
